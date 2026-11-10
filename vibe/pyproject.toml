@@ -1,0 +1,22 @@
+[project]
+name = "vibe-simple"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = []
+
+# The `agent` optional-dependency group is what pulls mistral-vibe into the
+# venv. The root stub itself is trivially buildable with setuptools so
+# uv2nix's deps.all venv can include it.
+[project.optional-dependencies]
+agent = ["mistral-vibe==2.25.5"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+no-build = true
+
+# Regenerate on the server:
+#   sudo -u ai sh -c 'cd <dir> && /run/current-system/sw/bin/vibe-env -c "uv lock"'
+# then copy uv.lock back here.
