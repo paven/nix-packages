@@ -1,46 +1,62 @@
-# OpenCode v2 — single static binary release from sst/anomalyco GitHub.
+# OpenCode v2 — official release binary, run inside an FHS bubble.
 #
-# Nixpkgs' opencode lags behind (and pins an old major), so we fetch the
-# official release tarball directly and sideload the version we want.
-# Bump the version by changing `version` and `hash` (nix will tell you the
-# real hash on the first build failure).
+# The opencode binary is a Bun single-file standalone. patchelf breaks its
+# embedded-payload resolution (the binary then falls back to plain bun) and
+# NixOS has no /lib64/ld-linux — so we keep the pristine binary and give it a
+# normal Linux userland via buildFHSEnv (same pattern as the vibe agent).
+#
+# Binary source: the platform package the official installer
+# (opencode.ai/install) also downloads — @opencode/cli-linux-x64 from npm.
+#
+# Bump `version` + `hash` together (nix prints the correct hash on mismatch).
 
 {
   lib,
   stdenv,
+  buildFHSEnv,
   fetchurl,
-  makeWrapper,
   version ? "2.2.7",
-  hash ? "sha256-iabO4ie1S8ARF5xSil5jF2AyRisaXiFyO2FoAc3cLKc=",
 }:
 
-stdenv.mkDerivation {
+let
+  # The npm platform tarball contains package/bin/opencode.
+  platformPkg = stdenv.mkDerivation {
+    pname = "opencode-bin";
+    inherit version;
+    src = fetchurl {
+      url = "https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-${version}.tgz";
+      hash = "sha256-1lk1Rk+T8HkTYz+XfLmXI69k7v9q56gicizom+2r3UU=";
+    };
+    sourceRoot = ".";
+    dontBuild = true;
+    dontConfigure = true;
+    # Critical: default fixup (strip + patchelf shlib handling) corrupts the
+    # bun single-file payload — the binary then degrades to plain bun.
+    dontFixup = true;
+    dontStrip = true;
+    installPhase = ''
+      runHook preInstall
+      install -Dm755 package/bin/opencode $out/libexec/opencode
+      runHook postInstall
+    '';
+    meta = with lib; {
+      platforms = [ "x86_64-linux" ];
+    };
+  };
+in
+buildFHSEnv {
   pname = "opencode";
   inherit version;
-
-  src = fetchurl {
-    url = "https://github.com/anomalyco/opencode/releases/download/v${version}/opencode-linux-x64.tar.gz";
-    inherit hash;
-  };
-
-  # The tarball has no directories, just the binary — strip it into place.
-  sourceRoot = ".";
-
-  dontBuild = true;
-  dontConfigure = true;
-
-  nativeBuildInputs = [ makeWrapper ];
-
-  installPhase = ''
-    runHook preInstall
-    install -Dm755 opencode $out/bin/opencode
-    runHook postInstall
-  '';
-
-  # The binary is a static musl-ish build; NixOS runs it as-is. We don't
-  # patchelf — upstream's release binary expects standard glibc paths.
+  targetPkgs = p: [ p.glibc ];
+  # Unset & clean env so the binary sees a standard Linux layout. The FHS
+  # bubble supplies /lib64/ld-linux via the glibc mount.
+  runScript = "${platformPkg}/libexec/opencode";
+  # Callers that must run the bare binary inside their OWN FHS bubble
+  # (e.g. the openchamber service) use this instead of the wrapper.
+  passthru.binary = platformPkg;
+  passthru.binaryPath = "${platformPkg}/libexec/opencode";
   meta = with lib; {
-    description = "OpenCode AI coding agent (official prebuilt release)";
+    description = "OpenCode AI coding agent (official prebuilt release, FHS-wrapped)";
     license = licenses.unfree;
     platforms = [ "x86_64-linux" ];
     mainProgram = "opencode";
